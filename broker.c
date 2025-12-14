@@ -42,11 +42,21 @@ struct Message
 // > Variable de SHM
 int shmid; // id de la SHM
 char * shmadd; // adresse de la SHM
+
+// > Variable de semaphore
+sem_t * semMSG;
 // ---------------------------
 
 // ---- MAIN -----
 int main (int argc, char ** argv) {
     printf("BROKER : Init\n");
+
+    // * ---------- CREATION SEMAPHORE POUR SHM ------------- * //
+    printf("BROKER :  Creation du semaphore pour la SHM\n");
+    semMSG = sem_open("/msg",O_CREAT,0666,0);
+    CHECK(semMSG,"BROKER : Erreur lors de l'ouverture du semaphore\n");
+    printf("BROKER : Fin Creation du semaphore\n");
+
 
     // * ----- CREATION SHM * ---- //
     printf("BROKER : Creation de la SHM pour les messages\n");
@@ -65,6 +75,8 @@ int main (int argc, char ** argv) {
     //! A DEPLACER DANS LE SIGNAL HANDLER
     shmdt(shmadd);
     shmctl(shmid,IPC_RMID,NULL);
+    sem_close(semMSG);
+    sem_unlink("/msg");
     //! --------------------------------
     
 
