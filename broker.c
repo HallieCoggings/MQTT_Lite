@@ -5,19 +5,17 @@
 #include <semaphore.h>
 #include <sys/shm.h>
 #include <signal.h>
+#include <string.h>
 
-// TODO :
-/*
-    - Signal handler
-    - Gestion de plusieurs Topic
-*/
 
-// --- DEFINTION DE CONSTANTES ----
+
+// --- DEFINITION DE CONSTANTES ----
 #define MAX_NOMTOPIC 20 //taille max nom d'un topic
-#define MAX_MSG 100 // taillem ax d'un message
+#define MAX_MSG 100 // taille max d'un message
 #define MAX_NBTOPIC 10 // nombre max de topic possible
 #define TOK_FILE "./.cle" //Fichier utilise pour le token
 #define ID_PROJET 0 //ID du projet utilise pour le token
+#define MAX_SUB 20 // Nombre max de sub a un topic
 // ------------------
 
 
@@ -35,6 +33,15 @@ struct Message
     pid_t sender; // pid de celui qui envoie le message
     pid_t recepter; //pid de celui qui doit recevoir le message
 };
+
+//Structure pour gerer la liste de diffusion sur un topic
+struct listeTopic
+{
+    char topic[MAX_NOMTOPIC]; // nom du topic
+    pid_t sub[MAX_SUB]; // nombre de sub
+    int nb_sub; // nombre de sub au topic
+};
+
 // -----------------------------------
 
 // -- DEFINITION VARIABLE GLOBALE ---
@@ -44,6 +51,10 @@ char * shmadd; // adresse de la SHM
 
 // > Variable de semaphore
 sem_t * semMSG;
+
+// > Variable pour la gestion des topics
+struct listeTopic allTopic[MAX_NBTOPIC]; // tableau contenant tout les topics
+int nbTopicCrees = 0; //Nb topci créer //! Surement a proteger avec Mutex
 // ---------------------------
 
 
@@ -51,14 +62,95 @@ sem_t * semMSG;
 void brokerHandler (int signb) {
     switch (signb)
     {
-    case SIGINT:
-        printf("BORKER : Destruction SHM & sémahore\n");
+    case SIGINT: // Signal Fin de programme
+        printf("BORKER : Destruction SHM & semaphore\n");
         shmdt(shmadd);
         shmctl(shmid,IPC_RMID,NULL);
         sem_close(semMSG);
         sem_unlink("/msg");
         printf("BROKER : Fin du Programme\n");
         exit(EXIT_SUCCESS);
+        break;
+
+    case SIGUSR1: // Signal => Publication d'un msg par Pub
+        printf("BROKER : J'ai reçu un message\n");
+        printf("\t> Attente de la disponibilite du semaphore pour lire msg\n");
+        sem_wait(semMSG);
+
+        struct Message  * msg = shmadd;
+        printf("\t> Lecture des differentes informations du message\n");
+        printf("BROKER : J'ai lu :\n\t-Topic : %s\t\n-Message : %s\n\t -Sender : %d\n\t-Recepter : %d",msg->topic , msg->msg, msg->sender, msg->recepter);
+        printf("\t> Notifier bonne reception du messages\n");
+        kill(msg->sender,SIGUSR1); // Notifier Sender de la bonne reception du message
+        printf("\t> Gestion du topic\n");
+        int indexTopic = -1;
+
+        // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
+        for (int i=0; i<MAX_NBTOPIC;i++){
+            if (!(strcmp(allTopic[i].topic,msg->topic))) {
+                indexTopic = i;
+            }
+        }
+
+        if (indexTopic>-1) {
+            printf("\t> Le topic existe, publication du message\n");
+            // TODO : A retravailler quand pub et sub fini (car pense car bizarre avec le semaphore)
+            for (int j = 0; j<allTopic[indexTopic].nb_sub;j++) {
+                msg->sender = getpid(); // on definit le broker comme celui qui envoie le message
+                msg->recepter = allTopic[indexTopic].sub[j]; // on définit a qui on envoie le message
+                kill(allTopic[indexTopic].sub[j], SIGUSR2);// signal pour dire publication
+            }
+            sem_post(semMSG); //Mise en place d'un jeton pour que les processus puissent lire
+
+        }else{
+            printf("\t> Le Topic n'existe pas, creation\n");
+            if (nbTopicCrees+1 >= MAX_NBTOPIC){
+                printf("BROKER : Impossible de créer un Topic en plus\n");
+            }else{
+                strcpy(allTopic[nbTopicCrees].topic,msg->topic);
+                nbTopicCrees++;
+            }
+        }
+        break;
+
+    case SIGUSR2:
+        // TODO : Verifier bon fonctionnement avec sub fini (maybe erreur quand copie dans tableau de sub)
+        printf("BROKER : J'ai recu une demande de sub\n");
+        pritnf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
+        sem_wait(semMSG);
+        struct Message * msg = shmadd;
+        printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d",msg->topic, msg->sender);
+        printf("\t> Envoi de l'accuse de reception\n");
+        kill(msg->sender, SIGUSR2);
+        // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
+        for (int i=0; i<MAX_NBTOPIC;i++){
+            if (!(strcmp(allTopic[i].topic,msg->topic))) {
+                indexTopic = i;
+            }
+        }
+
+        if (indexTopic> -1) {
+            if (allTopic[indexTopic].nb_sub+1 < MAX_SUB) {
+                printf("\t> Ajout du sub\n");
+                allTopic[indexTopic].sub[allTopic[indexTopic].nb_sub] = msg->sender;
+                allTopic[indexTopic].nb_sub++;
+            }else{
+                printf("BROKER : Impossible de sub a ce topic, le nombre de sub max est atteint\n");
+                //TODO : définir signal pour dire sub impossible
+            }
+        }else{
+            printf("\t> Le Topic n'existe pas, creation\n");
+            if (nbTopicCrees+1 >= MAX_NBTOPIC){
+                printf("BROKER : Impossible de créer un Topic en plus\n");
+                //TODO : definir signal pour dire creation impossible
+            }else{
+                strcpy(allTopic[nbTopicCrees].topic,msg->topic);
+                allTopic[nbTopicCrees].sub[allTopic[nbTopicCrees].nb_sub] = msg->sender;
+                allTopic[nbTopicCrees].nb_sub++;
+                nbTopicCrees++;
+            }
+        }
+
         break;
     
     default:
