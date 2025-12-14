@@ -4,11 +4,10 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <sys/shm.h>
+#include <signal.h>
 
 // TODO :
 /*
-    - Creation SHM
-    - Sémaphore
     - Signal handler
     - Gestion de plusieurs Topic
 */
@@ -47,15 +46,49 @@ char * shmadd; // adresse de la SHM
 sem_t * semMSG;
 // ---------------------------
 
+
+// ---- DEFINTION DE SIGNAL HANDLER ----
+void brokerHandler (int signb) {
+    switch (signb)
+    {
+    case SIGINT:
+        printf("BORKER : Destruction SHM & sémahore\n");
+        shmdt(shmadd);
+        shmctl(shmid,IPC_RMID,NULL);
+        sem_close(semMSG);
+        sem_unlink("/msg");
+        printf("BROKER : Fin du Programme\n");
+        exit(EXIT_SUCCESS);
+        break;
+    
+    default:
+        break;
+    }
+}
+// ----------------------------------
+
 // ---- MAIN -----
 int main (int argc, char ** argv) {
-    printf("BROKER : Init\n");
+    printf("BROKER (%d): Init\n", getpid());
+
+    // * -- CREATION DU SIGNAL HANDLER * ---
+    struct sigaction mask;
+    sigset_t old;
+    void brokerHandler();
+    mask.sa_flags = 0;
+    mask.sa_handler = brokerHandler;
+    CHECK(sigemptyset(&mask.sa_mask),"BROKER : Erreur lors du SIGEMPTY\n");
+
+    CHECK(sigprocmask(SIG_SETMASK,&mask.sa_mask,&old),"BROKER : Erreur lors du SIGPROC");
+    CHECK(sigaction(SIGINT,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGINT\n");
+    // -------------------------------------
 
     // * ---------- CREATION SEMAPHORE POUR SHM ------------- * //
     printf("BROKER :  Creation du semaphore pour la SHM\n");
     semMSG = sem_open("/msg",O_CREAT,0666,0);
     CHECK(semMSG,"BROKER : Erreur lors de l'ouverture du semaphore\n");
     printf("BROKER : Fin Creation du semaphore\n");
+    // ----------------------------------------
 
 
     // * ----- CREATION SHM * ---- //
@@ -72,15 +105,12 @@ int main (int argc, char ** argv) {
     printf("BROKER : Fin creation SHM\n");
     // ------------------------------------
 
-    //! A DEPLACER DANS LE SIGNAL HANDLER
-    shmdt(shmadd);
-    shmctl(shmid,IPC_RMID,NULL);
-    sem_close(semMSG);
-    sem_unlink("/msg");
-    //! --------------------------------
-    
-
-
+    // * --- Main Code * -------- //
+    sem_post(semMSG); // placer jeton dans le semaphore pour le rendre accessible
+    printf("BROKER : Configuration Finie - Attente de publication de message\n");
+    while (1) {
+    }
+    // --------------------------
     exit(EXIT_SUCCESS);
 }
 // ------- //
