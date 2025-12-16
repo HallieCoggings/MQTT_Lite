@@ -5,6 +5,7 @@
 #include <semaphore.h>
 #include <sys/shm.h>
 #include <signal.h>
+#include <string.h>
 
 // --- DEFINITION DE CONSTANTES ----
 #define MAX_NOMTOPIC 20 //taille max nom d'un topic

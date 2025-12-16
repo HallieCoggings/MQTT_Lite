@@ -47,7 +47,7 @@ struct listeTopic
 // -- DEFINITION VARIABLE GLOBALE ---
 // > Variable de SHM
 int shmid; // id de la SHM
-char * shmadd; // adresse de la SHM
+struct Message * shmadd; // adresse de la SHM
 
 // > Variable de semaphore
 sem_t * semMSG;
@@ -60,10 +60,11 @@ int nbTopicCrees = 0; //Nb topci créer //! Surement a proteger avec Mutex
 
 // ---- DEFINTION DE SIGNAL HANDLER ----
 void brokerHandler (int signb) {
+    struct Message  * msg = shmadd;
     switch (signb)
     {
     case SIGINT: // Signal Fin de programme
-        printf("BORKER : Destruction SHM & semaphore\n");
+        printf("\nBORKER : Destruction SHM & semaphore\n");
         shmdt(shmadd);
         shmctl(shmid,IPC_RMID,NULL);
         sem_close(semMSG);
@@ -77,9 +78,8 @@ void brokerHandler (int signb) {
         printf("\t> Attente de la disponibilite du semaphore pour lire msg\n");
         sem_wait(semMSG);
 
-        struct Message  * msg = shmadd;
         printf("\t> Lecture des differentes informations du message\n");
-        printf("BROKER : J'ai lu :\n\t-Topic : %s\t\n-Message : %s\n\t -Sender : %d\n\t-Recepter : %d",msg->topic , msg->msg, msg->sender, msg->recepter);
+        printf("BROKER : J'ai lu :\n\t-Topic : %s\n\t-Message : %s\n\t -Sender : %d\n\t-Recepter : %d\n",msg->topic , msg->msg, msg->sender, msg->recepter);
         printf("\t> Notifier bonne reception du messages\n");
         kill(msg->sender,SIGUSR1); // Notifier Sender de la bonne reception du message
         printf("\t> Gestion du topic\n");
@@ -94,31 +94,30 @@ void brokerHandler (int signb) {
 
         if (indexTopic>-1) {
             printf("\t> Le topic existe, publication du message\n");
-            // TODO : A retravailler quand pub et sub fini (car pense car bizarre avec le semaphore)
+            // TODO : A verify quand sub fini, pense que y aura probleme avec le semaphore
             for (int j = 0; j<allTopic[indexTopic].nb_sub;j++) {
                 msg->sender = getpid(); // on definit le broker comme celui qui envoie le message
                 msg->recepter = allTopic[indexTopic].sub[j]; // on définit a qui on envoie le message
                 kill(allTopic[indexTopic].sub[j], SIGUSR2);// signal pour dire publication
             }
-            sem_post(semMSG); //Mise en place d'un jeton pour que les processus puissent lire
 
         }else{
             printf("\t> Le Topic n'existe pas, creation\n");
             if (nbTopicCrees+1 >= MAX_NBTOPIC){
-                printf("BROKER : Impossible de créer un Topic en plus\n");
+                printf("BROKER : ERREUR : Impossible de créer un Topic en plus\n");
             }else{
                 strcpy(allTopic[nbTopicCrees].topic,msg->topic);
                 nbTopicCrees++;
             }
         }
+        sem_post(semMSG); //Mise en place d'un jeton pour que les processus puissent lire
         break;
 
     case SIGUSR2:
         // TODO : Verifier bon fonctionnement avec sub fini (maybe erreur quand copie dans tableau de sub)
         printf("BROKER : J'ai recu une demande de sub\n");
-        pritnf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
+        printf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
         sem_wait(semMSG);
-        struct Message * msg = shmadd;
         printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d",msg->topic, msg->sender);
         printf("\t> Envoi de l'accuse de reception\n");
         kill(msg->sender, SIGUSR2);
@@ -156,6 +155,8 @@ void brokerHandler (int signb) {
     default:
         break;
     }
+    printf("BROKER : La demande a ete traitee\n");
+    printf("BROKER : Attente d'une nouvelle demande\n\n\n");
 }
 // ----------------------------------
 
@@ -173,6 +174,9 @@ int main (int argc, char ** argv) {
 
     CHECK(sigprocmask(SIG_SETMASK,&mask.sa_mask,&old),"BROKER : Erreur lors du SIGPROC");
     CHECK(sigaction(SIGINT,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGINT\n");
+    CHECK(sigaction(SIGUSR1,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGUSR1\n");
+    CHECK(sigaction(SIGUSR2,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGUSR2\n");
+
     // -------------------------------------
 
     // * ---------- CREATION SEMAPHORE POUR SHM ------------- * //
