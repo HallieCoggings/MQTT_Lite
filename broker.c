@@ -54,13 +54,14 @@ sem_t * semMSG;
 
 // > Variable pour la gestion des topics
 struct listeTopic allTopic[MAX_NBTOPIC]; // tableau contenant tout les topics
-int nbTopicCrees = 0; //Nb topci créer //! Surement a proteger avec Mutex
+int nbTopicCrees = 0; //Nb topci créer 
 // ---------------------------
 
 
 // ---- DEFINTION DE SIGNAL HANDLER ----
 void brokerHandler (int signb) {
     struct Message  * msg = shmadd;
+    int indexTopic = -1;
     switch (signb)
     {
     case SIGINT: // Signal Fin de programme
@@ -83,7 +84,7 @@ void brokerHandler (int signb) {
         printf("\t> Notifier bonne reception du messages\n");
         kill(msg->sender,SIGUSR1); // Notifier Sender de la bonne reception du message
         printf("\t> Gestion du topic\n");
-        int indexTopic = -1;
+
 
         // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
         for (int i=0; i<MAX_NBTOPIC;i++){
@@ -94,7 +95,6 @@ void brokerHandler (int signb) {
 
         if (indexTopic>-1) {
             printf("\t> Le topic existe, publication du message\n");
-            // TODO : A verify quand sub fini, pense que y aura probleme avec le semaphore
             for (int j = 0; j<allTopic[indexTopic].nb_sub;j++) {
                 msg->sender = getpid(); // on definit le broker comme celui qui envoie le message
                 msg->recepter = allTopic[indexTopic].sub[j]; // on définit a qui on envoie le message
@@ -114,19 +114,19 @@ void brokerHandler (int signb) {
         break;
 
     case SIGUSR2:
-        // TODO : Verifier bon fonctionnement avec sub fini (maybe erreur quand copie dans tableau de sub)
         printf("BROKER : J'ai recu une demande de sub\n");
         printf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
         sem_wait(semMSG);
-        printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d",msg->topic, msg->sender);
+        printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d\n",msg->topic, msg->sender);
         printf("\t> Envoi de l'accuse de reception\n");
-        kill(msg->sender, SIGUSR2);
+        //kill(msg->sender, SIGUSR2);
         // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
-        for (int i=0; i<MAX_NBTOPIC;i++){
+        for (int i=0; i<nbTopicCrees;i++){
             if (!(strcmp(allTopic[i].topic,msg->topic))) {
                 indexTopic = i;
             }
         }
+
 
         if (indexTopic> -1) {
             if (allTopic[indexTopic].nb_sub+1 < MAX_SUB) {
@@ -150,6 +150,7 @@ void brokerHandler (int signb) {
             }
         }
 
+        sem_post(semMSG);
         break;
     
     default:
