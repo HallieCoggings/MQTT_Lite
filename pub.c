@@ -34,6 +34,10 @@ struct Message
 int shmid; // id de la SHM
 char * shmadd; // adresse de la SHM
 
+// > Variable SHM PID
+int shmid_PID; // id de la SHM PID
+int * shmadd_PID; // adresse de la SHM PID
+
 // > Variable de la semaphore 
 sem_t *semMSG;
 
@@ -50,6 +54,7 @@ void publisherHandler(int signb) {
     } else if (signb == SIGINT) { // signal de fin de programme
         printf("\nPUB : Fin du programme\n");
         shmdt(shmadd);
+        shmdt(shmadd_PID);
         sem_close(semMSG);
         exit(EXIT_SUCCESS);
     }
@@ -72,11 +77,29 @@ int main (int argc, char ** argv) {
     // -------------------------------------
 
     // * -- RECUPERATION DU PID DU BROKER * ---
+    /*
+    V1 :
     printf("PUB : Entrez le PID du broker : "); //recup PID broker pour envoi signaux
     scanf("%d", &broker_pid);
     //verification de l'existence du broker
     CHECK(kill(broker_pid, 0), "PUB : Le broker n'existe pas\n"); 
     printf("PUB : Broker trouve (PID: %d)\n", broker_pid);
+    */
+
+    // V2 : utilisation d'une SHM
+    printf("PUB : Recuperation du PID du Broker\n");
+    printf("\t> Generation de la cle pour la SHM_PID\n");
+    key_t tok_PID = ftok(TOK_FILE,ID_PROJET+1);
+    CHECK(tok_PID,"PUB : Erreur creation cle pour la SHM\n");
+    printf("\t> Recuperation de l'id de la SHM\n");
+    shmid_PID = shmget(tok_PID,sizeof(int), 0666);
+    CHECK(shmid_PID,"PUB : Erreur lors de la recuperation d'id pour la SHM\n");
+    printf("\t> Obtenir Mem Addr de la SHM\n");
+    shmadd_PID = shmat(shmid_PID,NULL,0);
+    CHECK(shmadd_PID,"PUB :  Erreur lors de l'obtention de l'addresse Memoire de la SHM\n");
+    printf("\t> Sauvegarde du PID\n");
+    broker_pid = *shmadd_PID;
+    printf("PUB : PID du Broker trouvé (%d)\n",broker_pid);
     // -----------------------------------------
 
     // * ---------- OUVERTURE SEMAPHORE ------------- * //
@@ -109,9 +132,11 @@ int main (int argc, char ** argv) {
     
     char topic[MAX_NOMTOPIC]; //buffer topic
     char message[MAX_MSG]; //buffer message
+    /*
+    Avec la V1 pour récupérer ID du boker
     int c;
-
     while ((c = getchar()) != '\n' && c != EOF); // vider buffer
+    */
 
     //boucle infinie publication
     while (1) {
@@ -188,6 +213,7 @@ int main (int argc, char ** argv) {
     // * --- Nettoyage * ---
     printf("PUB : Nettoyage\n");
     shmdt(shmadd);
+    shmdt(shmadd_PID);
     sem_close(semMSG);
     printf("PUB : Fin du programme\n");
     

@@ -49,6 +49,10 @@ struct listeTopic
 int shmid; // id de la SHM
 struct Message * shmadd; // adresse de la SHM
 
+// > Variable SHM PID
+int shmid_PID; // id de la SHM PID
+int * shmadd_PID; // adresse de la SHM PID
+
 // > Variable de semaphore
 sem_t * semMSG;
 
@@ -68,6 +72,8 @@ void brokerHandler (int signb) {
         printf("\nBORKER : Destruction SHM & semaphore\n");
         shmdt(shmadd);
         shmctl(shmid,IPC_RMID,NULL);
+        shmdt(shmadd_PID);
+        shmctl(shmid_PID,IPC_RMID,NULL);
         sem_close(semMSG);
         sem_unlink("/msg");
         printf("BROKER : Fin du Programme\n");
@@ -201,6 +207,22 @@ int main (int argc, char ** argv) {
     CHECK(shmadd,"BROKER : Erreur lros de l'allocation memoire de la SHM\n");
     printf("BROKER : Fin creation SHM\n");
     // ------------------------------------
+
+    // * ------ Creation SHM pour contenir le PID * ------- //
+    printf("BROKER : Creation de la SHM contenant mon PID\n");
+    printf("\t> Creation de la cle\n");
+    key_t tok_PID = ftok(TOK_FILE,ID_PROJET+1);
+    CHECK(tok_PID,"BROKER : Erreur creation cle pour la SHM\n");
+    printf("\t> Creation de l'id de la SHM\n");
+    shmid_PID = shmget(tok_PID,sizeof(int), 0666 | IPC_CREAT);
+    CHECK(shmid_PID,"BROKER : Erreur lors de l'attribution d'id pour la SHM\n");
+    printf("\t> Allocation de memoire a la SHM\n");
+    shmadd_PID = shmat(shmid_PID,NULL,0);
+    CHECK(shmadd_PID,"BROKER : Erreur lros de l'allocation memoire de la SHM\n");
+    printf("\t> Ecriture de mon PID dans la SHM\n");
+    *shmadd_PID = getpid(); // ecrire valeur point
+    printf("BROKER : Fin creation SHM_PID\n");
+    // -------------------------------
 
     // * --- Main Code * -------- //
     sem_post(semMSG); // placer jeton dans le semaphore pour le rendre accessible

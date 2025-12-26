@@ -26,7 +26,7 @@
 //Structure pour contenir un message
 struct Message
 {
-    char topic[MAX_NOMTOPIC]; //topic sur lequel est publié le message
+    char topic[MAX_NOMTOPIC]; //topic sur lequel est SUBlié le message
     char msg[MAX_MSG]; // message
     pid_t sender; // pid de celui qui envoie le message
     pid_t recepter; //pid de celui qui doit recevoir le message
@@ -47,6 +47,10 @@ struct listeTopic
 int shmid; // id de la SHM
 struct Message * shmadd; // adresse de la SHM
 
+// > Variable SHM PID
+int shmid_PID; // id de la SHM PID
+int * shmadd_PID; // adresse de la SHM PID
+
 // > Variable de semaphore
 sem_t * semMSG;
 
@@ -65,6 +69,7 @@ void subHandler (int signb) {
         // * ----------- Destruction des liens ------------- * //
         printf("SUB : Suppression liens SHM & Semaphore\n");
         shmdt(shmadd);
+        shmdt(shmadd_PID);
         sem_close(semMSG);
         printf("SUB : Fin d'execution\n");
         exit(EXIT_SUCCESS);
@@ -125,19 +130,35 @@ int main (int argc, char ** argv) {
     // * ----------- MAIN -------------*
 
     // Obtention du Broker
+    /*
+    V1 Obtention du BROKER
     char buf_tmp[64];
     printf("SUB : Entrez le PID du broker : "); //recup PID broker pour envoi signaux
     fgets(buf_tmp,64,stdin);
     broker_pid = atoi(buf_tmp);
     //verification de l'existence du broker
-    CHECK(kill(broker_pid, 0), "PUB : Le broker n'existe pas\n"); 
+    CHECK(kill(broker_pid, 0), "SUB : Le broker n'existe pas\n"); 
     printf("SUB : Broker trouve (PID: %d)\n", broker_pid);
+    */
+    printf("SUB : Recuperation du PID du Broker\n");
+    printf("\t> Generation de la cle pour la SHM_PID\n");
+    key_t tok_PID = ftok(TOK_FILE,ID_PROJET+1);
+    CHECK(tok_PID,"SUB : Erreur creation cle pour la SHM\n");
+    printf("\t> Recuperation de l'id de la SHM\n");
+    shmid_PID = shmget(tok_PID,sizeof(int), 0666);
+    CHECK(shmid_PID,"SUB : Erreur lors de la recuperation d'id pour la SHM\n");
+    printf("\t> Obtenir Mem Addr de la SHM\n");
+    shmadd_PID = shmat(shmid_PID,NULL,0);
+    CHECK(shmadd_PID,"SUB :  Erreur lors de l'obtention de l'addresse Memoire de la SHM\n");
+    printf("\t> Sauvegarde du PID\n");
+    broker_pid = *shmadd_PID;
+    printf("SUB : PID du Broker trouvé (%d)\n",broker_pid);
     // ---------
     char topic[MAX_NOMTOPIC];
 
 
     printf("SUB : Nouvelle demande d'abonnement\n");
-    printf("SUB : Entrez le nom du topic :");
+    printf("SUB : Entrez le nom du topic (quit pour quitter):");
     fgets(topic,MAX_NOMTOPIC,stdin);
     topic[strcspn(topic, "\n")] = '\0';
 
