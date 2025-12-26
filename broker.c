@@ -109,7 +109,7 @@ void brokerHandler (int signb) {
 
         }else{
             printf("\t> Le Topic n'existe pas, creation\n");
-            if (nbTopicCrees+1 >= MAX_NBTOPIC){
+            if (nbTopicCrees+1 > MAX_NBTOPIC){
                 printf("BROKER : ERREUR : Impossible de créer un Topic en plus\n");
             }else{
                 strcpy(allTopic[nbTopicCrees].topic,msg->topic);
@@ -141,13 +141,13 @@ void brokerHandler (int signb) {
                 allTopic[indexTopic].nb_sub++;
             }else{
                 printf("BROKER : Impossible de sub a ce topic, le nombre de sub max est atteint\n");
-                //TODO : définir signal pour dire sub impossible
+                kill(msg->sender,SIGUSR1);
             }
         }else{
             printf("\t> Le Topic n'existe pas, creation\n");
-            if (nbTopicCrees+1 >= MAX_NBTOPIC){
+            if (nbTopicCrees+1 > MAX_NBTOPIC){
                 printf("BROKER : Impossible de créer un Topic en plus\n");
-                //TODO : definir signal pour dire creation impossible
+                kill(msg->sender,SIGUSR1);
             }else{
                 strcpy(allTopic[nbTopicCrees].topic,msg->topic);
                 allTopic[nbTopicCrees].sub[allTopic[nbTopicCrees].nb_sub] = msg->sender;

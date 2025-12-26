@@ -56,6 +56,8 @@ sem_t * semMSG;
 
 // > variable lie au broker
 pid_t broker_pid;
+int isSub = 0;
+int subFlag = 0;
 
 // ---------------------------
 
@@ -75,6 +77,11 @@ void subHandler (int signb) {
         exit(EXIT_SUCCESS);
         break;
 
+    case SIGUSR1:
+        printf("SUB : Impossible de s'abonner (trop de sub a ce topic ou impossible de creer nouveau topic)\n");
+        subFlag = 2;
+        break;
+
     case SIGUSR2:
         printf("SUB : Reception d'un message \n");
         printf("\t> Attente du semaphore\n");
@@ -82,6 +89,7 @@ void subHandler (int signb) {
         printf("\t> Traitement de la reception\n");
         printf("SUB : Mesage : %s\n", msg->msg);
         printf("SUB : J'ai fini de traiter la demande");
+        subFlag = 1;
         sem_post(semMSG);
         break;
     
@@ -102,6 +110,7 @@ int main (int argc, char ** argv) {
     mask.sa_handler = subHandler;
     CHECK(sigemptyset(&mask.sa_mask),"SUB : Erreur lors du SIGEMPTY\n");
     CHECK(sigprocmask(SIG_SETMASK,&mask.sa_mask,&old),"SUB : Erreur lors du SIGPROC\n");
+    CHECK(sigaction(SIGUSR1,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
     CHECK(sigaction(SIGUSR2,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
     CHECK(sigaction(SIGINT,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT");
     // ----------------------------------
@@ -156,31 +165,45 @@ int main (int argc, char ** argv) {
     // ---------
     char topic[MAX_NOMTOPIC];
 
+    while (!isSub){
+        subFlag = 0;
+        printf("SUB : Nouvelle demande d'abonnement\n");
+        printf("SUB : Entrez le nom du topic (quit pour quitter):");
+        fgets(topic,MAX_NOMTOPIC,stdin);
+        topic[strcspn(topic, "\n")] = '\0';
 
-    printf("SUB : Nouvelle demande d'abonnement\n");
-    printf("SUB : Entrez le nom du topic (quit pour quitter):");
-    fgets(topic,MAX_NOMTOPIC,stdin);
-    topic[strcspn(topic, "\n")] = '\0';
+        if (strcmp(topic,"quit")!=0){
+            printf("SUB : Traitement de la demande d'abo\n");
+            printf("\t> Attente Semaphore\n");
+            sem_wait(semMSG);
+            printf("\t> Ecriture dans la SHM\n");
+            struct Message * msg = shmadd;
+            strcpy(msg->topic,topic);
+            msg->sender = getpid();
+            msg->recepter = broker_pid;
+            kill(broker_pid,SIGUSR2);
+            sem_post(semMSG);
+            while(subFlag ==0) {
+                //attente signal
+            }
 
-    if (strcmp(topic,"quit")!=0){
-        printf("SUB : Traitement de la demande d'abo\n");
-        printf("\t> Attente Semaphore\n");
-        sem_wait(semMSG);
-        printf("\t> Ecriture dans la SHM\n");
-        struct Message * msg = shmadd;
-        strcpy(msg->topic,topic);
-        msg->sender = getpid();
-        msg->recepter = broker_pid;
-        kill(broker_pid,SIGUSR2);
-        sem_post(semMSG);
-        printf("SUB : Je passe en mode Reception de MSG\n");
-        while(1){
-            // Boucle d'attente des messages et signaux
+            if (subFlag == 1) {
+                printf("SUB : Je suis sub à %s",topic);
+            }
+
+            if (subFlag == 0) {
+                printf("SUB : La demande a echoue\n");
+            }
+        }else{
+            raise(SIGINT); // Envoie d'un signal SIGINT sur soi meme
         }
-    }else{
-        raise(SIGINT); // Envoie d'un signal SIGINT sur soi meme
     }
-    
+
+    printf("SUB : Je passe en mode Reception de MSG\n");
+    while(1){
+        //attente de message
+    }
+
     // ---------------------------------
 }
 
