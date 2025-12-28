@@ -1,3 +1,12 @@
+/********************************************************
+ * Titre du fichier : broker.c
+ * Date : Decembre 2025
+ * Version : 1.0
+ * Description du fichier :
+ * Ce fichier contient le code du programme Broker utilise pour gerer les demandes de connexion 
+ * et publication de messages sur differents topics
+ */
+// Imporatation des librairies
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -20,6 +29,7 @@
 
 
 // ---- DEFINITION DE MACRO ----
+//Macro pour tester qu'il n'y a eu aucune erreur lors de differentes actions liees au systeme
 #define CHECK(sts,msg) if ((sts) == -1 )  { perror(msg);exit(-1);}
 //--------------
 
@@ -49,7 +59,7 @@ struct listeTopic
 int shmid; // id de la SHM
 struct Message * shmadd; // adresse de la SHM
 
-// > Variable SHM PID
+// > Variable SHM PID -> Cette SHM contient le PID du broker
 int shmid_PID; // id de la SHM PID
 int * shmadd_PID; // adresse de la SHM PID
 
@@ -57,8 +67,8 @@ int * shmadd_PID; // adresse de la SHM PID
 sem_t * semMSG;
 
 // > Variable pour la gestion des topics
-struct listeTopic allTopic[MAX_NBTOPIC]; // tableau contenant tout les topics
-int nbTopicCrees = 0; //Nb topci créer 
+struct listeTopic allTopic[MAX_NBTOPIC]; // tableau contenant tous les topics
+int nbTopicCrees = 0; //Nb topci crées 
 // ---------------------------
 
 
@@ -91,8 +101,7 @@ void brokerHandler (int signb) {
         kill(msg->sender,SIGUSR1); // Notifier Sender de la bonne reception du message
         printf("\t> Gestion du topic\n");
 
-
-        // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
+        // Recherche de la présence de topic
         for (int i=0; i<MAX_NBTOPIC;i++){
             if (!(strcmp(allTopic[i].topic,msg->topic))) {
                 indexTopic = i;
@@ -116,17 +125,16 @@ void brokerHandler (int signb) {
                 nbTopicCrees++;
             }
         }
-        sem_post(semMSG); //Mise en place d'un jeton pour que les processus puissent lire
+        sem_post(semMSG); //Mise en place d'un jeton pour que les clients puissent lire la SHM
         break;
 
-    case SIGUSR2:
+    case SIGUSR2: //Signal de demande d'abonnement
         printf("BROKER : J'ai recu une demande de sub\n");
         printf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
         sem_wait(semMSG);
         printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d\n",msg->topic, msg->sender);
-        printf("\t> Envoi de l'accuse de reception\n");
-        //kill(msg->sender, SIGUSR2);
-        // Maybe a retravailler car bien quand 10 topic mais peu efficace avec 10000 topics
+
+        // Recherche la présence du topic
         for (int i=0; i<nbTopicCrees;i++){
             if (!(strcmp(allTopic[i].topic,msg->topic))) {
                 indexTopic = i;
@@ -134,16 +142,17 @@ void brokerHandler (int signb) {
         }
 
 
-        if (indexTopic> -1) {
+        if (indexTopic> -1) { // le topic existe
             if (allTopic[indexTopic].nb_sub+1 < MAX_SUB) {
                 printf("\t> Ajout du sub\n");
                 allTopic[indexTopic].sub[allTopic[indexTopic].nb_sub] = msg->sender;
                 allTopic[indexTopic].nb_sub++;
+                kill(msg->sender,SIGHUP);
             }else{
                 printf("BROKER : Impossible de sub a ce topic, le nombre de sub max est atteint\n");
-                kill(msg->sender,SIGUSR1);
+                kill(msg->sender,SIGUSR1); // dans le programem sub, il y a une gestion de SIGUSR1
             }
-        }else{
+        }else{ // le topic n'existe pas
             printf("\t> Le Topic n'existe pas, creation\n");
             if (nbTopicCrees+1 > MAX_NBTOPIC){
                 printf("BROKER : Impossible de créer un Topic en plus\n");
@@ -153,6 +162,7 @@ void brokerHandler (int signb) {
                 allTopic[nbTopicCrees].sub[allTopic[nbTopicCrees].nb_sub] = msg->sender;
                 allTopic[nbTopicCrees].nb_sub++;
                 nbTopicCrees++;
+                kill(msg->sender,SIGHUP);
             }
         }
 
@@ -171,7 +181,7 @@ void brokerHandler (int signb) {
 int main (int argc, char ** argv) {
     printf("BROKER (%d): Init\n", getpid());
 
-    // * -- CREATION DU SIGNAL HANDLER * ---
+    // * -- CREATION DU SIGNAL HANDLER --- * //
     struct sigaction mask;
     sigset_t old;
     void brokerHandler();
@@ -183,10 +193,10 @@ int main (int argc, char ** argv) {
     CHECK(sigaction(SIGINT,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGINT\n");
     CHECK(sigaction(SIGUSR1,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGUSR1\n");
     CHECK(sigaction(SIGUSR2,&mask,NULL),"BROKER : Erreur lors du SIGACTION pour SIGUSR2\n");
-
     // -------------------------------------
 
     // * ---------- CREATION SEMAPHORE POUR SHM ------------- * //
+    // Ce semaphore sert a proteger la SHM utilise pour transferer les messages entre les differents processus
     printf("BROKER :  Creation du semaphore pour la SHM\n");
     semMSG = sem_open("/msg",O_CREAT,0666,0);
     CHECK(semMSG,"BROKER : Erreur lors de l'ouverture du semaphore\n");
@@ -194,7 +204,8 @@ int main (int argc, char ** argv) {
     // ----------------------------------------
 
 
-    // * ----- CREATION SHM * ---- //
+    // * ----- CREATION SHM ----  * //
+    // Cette SHM contient un message ecrit par un processus "pub"
     printf("BROKER : Creation de la SHM pour les messages\n");
     printf("\t> Creation de la cle\n");
     key_t tok = ftok(TOK_FILE,ID_PROJET);
@@ -208,7 +219,9 @@ int main (int argc, char ** argv) {
     printf("BROKER : Fin creation SHM\n");
     // ------------------------------------
 
-    // * ------ Creation SHM pour contenir le PID * ------- //
+    // * ------ Creation SHM pour contenir le PID ------- * //
+    // Cette SHM contient le PID du broker pour permettre l'echange du PID du broker entre les differents processus
+    // utilisant cette version simplifie de MQTT
     printf("BROKER : Creation de la SHM contenant mon PID\n");
     printf("\t> Creation de la cle\n");
     key_t tok_PID = ftok(TOK_FILE,ID_PROJET+1);
@@ -224,10 +237,10 @@ int main (int argc, char ** argv) {
     printf("BROKER : Fin creation SHM_PID\n");
     // -------------------------------
 
-    // * --- Main Code * -------- //
-    sem_post(semMSG); // placer jeton dans le semaphore pour le rendre accessible
+    // * --- Main Code -------- * //
+    sem_post(semMSG); // Mise en place d'un jeton dans le semaphore pour rendre la SHM accesible
     printf("BROKER : Configuration Finie - Attente de publication de message\n");
-    while (1) {
+    while (1) { // boucle d'attente de signaux
     }
     // --------------------------
     exit(EXIT_SUCCESS);

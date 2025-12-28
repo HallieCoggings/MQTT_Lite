@@ -1,5 +1,5 @@
 # MQTT_Lite
-Create a version of a MQTT with differents technologies
+Le but de ce repo est de créer une version simplifée et des technologies différentes d'un serveur MQTT et de ses clients
 
 <img width="1424" height="850" alt="image" src="https://github.com/user-attachments/assets/298c5965-51ea-4f6f-9401-8fbb8ceba64a" />
 <img width="1424" height="775" alt="image" src="https://github.com/user-attachments/assets/58e4c7e8-10bf-452c-9677-319b09c31e7e" />

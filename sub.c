@@ -1,3 +1,12 @@
+/*******************
+ * Titre du fichier : sub.c
+ * Date : Decembre 2025
+ * Version : 1.0
+ * Description :
+ * Ce fichier contient le programme d'un abonne a un topic dans la version simplifie de MQTT
+ * 
+ */
+// Importation des libraires
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -18,6 +27,7 @@
 
 
 // ---- DEFINITION DE MACRO ----
+//Macro pour tester qu'il n'y a eu aucune erreur lors de differentes actions liees au systeme
 #define CHECK(sts,msg) if ((sts) == -1 )  { perror(msg);exit(-1);}
 //--------------
 
@@ -32,14 +42,6 @@ struct Message
     pid_t recepter; //pid de celui qui doit recevoir le message
 };
 
-//Structure pour gerer la liste de diffusion sur un topic
-struct listeTopic
-{
-    char topic[MAX_NOMTOPIC]; // nom du topic
-    pid_t sub[MAX_SUB]; // nombre de sub
-    int nb_sub; // nombre de sub au topic
-};
-
 // -----------------------------------
 
 // -- DEFINITION VARIABLE GLOBALE ---
@@ -48,16 +50,16 @@ int shmid; // id de la SHM
 struct Message * shmadd; // adresse de la SHM
 
 // > Variable SHM PID
-int shmid_PID; // id de la SHM PID
-int * shmadd_PID; // adresse de la SHM PID
+int shmid_PID; // id de la SHM PID du broker
+int * shmadd_PID; // adresse de la SHM PID du broker
 
 // > Variable de semaphore
 sem_t * semMSG;
 
 // > variable lie au broker
 pid_t broker_pid;
-int isSub = 0;
-int subFlag = 0;
+int isSub = 0; // est-ce que le processus est abonne
+int subFlag = 0; // est-ce que le processus peut s'abonner
 
 // ---------------------------
 
@@ -66,7 +68,7 @@ void subHandler (int signb) {
     struct Message * msg = shmadd;
     switch (signb)
     {
-    case SIGINT:
+    case SIGINT: // Signal de fin de programme
         printf("\nSUB : Arret du programme\n");
         // * ----------- Destruction des liens ------------- * //
         printf("SUB : Suppression liens SHM & Semaphore\n");
@@ -77,20 +79,23 @@ void subHandler (int signb) {
         exit(EXIT_SUCCESS);
         break;
 
-    case SIGUSR1:
+    case SIGUSR1: // Signal pour dire que l'abonnement est impossible
         printf("SUB : Impossible de s'abonner (trop de sub a ce topic ou impossible de creer nouveau topic)\n");
         subFlag = 2;
         break;
 
-    case SIGUSR2:
-        printf("SUB : Reception d'un message \n");
+    case SIGUSR2: // Signal pour dire qu'un message est present
+        printf("SUB : Reception d'un message (topic : %s) \n",msg->topic);
         printf("\t> Attente du semaphore\n");
         sem_wait(semMSG);
         printf("\t> Traitement de la reception\n");
         printf("SUB : Mesage : %s\n", msg->msg);
         printf("SUB : J'ai fini de traiter la demande");
-        subFlag = 1;
         sem_post(semMSG);
+        break;
+
+    case SIGHUP:
+        subFlag = 1;
         break;
     
     default:
@@ -112,17 +117,21 @@ int main (int argc, char ** argv) {
     CHECK(sigprocmask(SIG_SETMASK,&mask.sa_mask,&old),"SUB : Erreur lors du SIGPROC\n");
     CHECK(sigaction(SIGUSR1,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
     CHECK(sigaction(SIGUSR2,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
-    CHECK(sigaction(SIGINT,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT");
+    CHECK(sigaction(SIGINT,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT\n");
+    CHECK(sigaction(SIGHUP,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT\n");
+
     // ----------------------------------
 
-    //* --- CREATION SEMAPHORE POUR SHM ---* //
+    //* --- CREATION SEMAPHORE POUR SHM --- * //
+    // Semphore pour acceder a la SHM des messages
     printf("SUB : Ouverture du semaphore pour la SHM\n");
     semMSG = sem_open("/msg",0);
     CHECK(semMSG,"SUB : Erreur lors de l'ouverture du sempahore\n");
     printf("SUB : Fin Ouverture Semaphore\n");
     // --------------------------------------
 
-    // * ---- ACCES SHM ---------* //
+    // * ---- ACCES SHM --------- * //
+    // Lien avec la SHM pour les messages
     printf("SUB : Acces a la SHM\n");
     printf("\t> Creation de la cle\n");
     key_t tok = ftok(TOK_FILE,ID_PROJET);
@@ -136,9 +145,9 @@ int main (int argc, char ** argv) {
     printf("SUB : Fin acces a la SHM\n");
     // ------------------------
 
-    // * ----------- MAIN -------------*
+    // * ----------- MAIN ------------- *//
 
-    // Obtention du Broker
+    // * ------ OBTENIR PID DU BROKER ------ * //
     /*
     V1 Obtention du BROKER
     char buf_tmp[64];
@@ -163,6 +172,7 @@ int main (int argc, char ** argv) {
     broker_pid = *shmadd_PID;
     printf("SUB : PID du Broker trouvé (%d)\n",broker_pid);
     // ---------
+    
     char topic[MAX_NOMTOPIC];
 
     while (!isSub){
@@ -181,14 +191,16 @@ int main (int argc, char ** argv) {
             strcpy(msg->topic,topic);
             msg->sender = getpid();
             msg->recepter = broker_pid;
-            kill(broker_pid,SIGUSR2);
             sem_post(semMSG);
+            kill(broker_pid,SIGUSR2);
+            printf("\t> Attente de la confirmation d'abonnement\n");
             while(subFlag ==0) {
                 //attente signal
             }
 
             if (subFlag == 1) {
-                printf("SUB : Je suis sub à %s",topic);
+                printf("SUB : Je suis sub à %s\n",topic);
+                isSub = 1;
             }
 
             if (subFlag == 0) {
