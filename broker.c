@@ -42,6 +42,7 @@ struct Message
     char msg[MAX_MSG]; // message
     pid_t sender; // pid de celui qui envoie le message
     pid_t recepter; //pid de celui qui doit recevoir le message
+    int action; //gestion abonnement(0), desinscription(1) et publication(-1) dans un topic
 };
 
 //Structure pour gerer la liste de diffusion sur un topic
@@ -128,41 +129,87 @@ void brokerHandler (int signb) {
         sem_post(semMSG); //Mise en place d'un jeton pour que les clients puissent lire la SHM
         break;
 
-    case SIGUSR2: //Signal de demande d'abonnement
-        printf("BROKER : J'ai recu une demande de sub\n");
+    case SIGUSR2: //Signal de demande d'abonnement OU desinscription
+        printf("BROKER : J'ai recu une demande\n");
         printf("\t> Attente de la liberation du semaphore pour traiter la demande\n");
         sem_wait(semMSG);
-        printf("BROKER : J'ai reçu une demande de sub au topic %s de la part de %d\n",msg->topic, msg->sender);
+        
+        if (msg->action == 0) {
+            // ===== ABONNEMENT =====
+            printf("BROKER : Demande d'abonnement au topic %s de la part de %d\n",msg->topic, msg->sender);
 
-        // Recherche la présence du topic
-        for (int i=0; i<nbTopicCrees;i++){
-            if (!(strcmp(allTopic[i].topic,msg->topic))) {
-                indexTopic = i;
+            // Recherche la présence du topic
+            indexTopic = -1;
+            for (int i=0; i<nbTopicCrees;i++){
+                if (!(strcmp(allTopic[i].topic,msg->topic))) {
+                    indexTopic = i;
+                }
             }
-        }
 
-
-        if (indexTopic> -1) { // le topic existe
-            if (allTopic[indexTopic].nb_sub+1 < MAX_SUB) {
-                printf("\t> Ajout du sub\n");
-                allTopic[indexTopic].sub[allTopic[indexTopic].nb_sub] = msg->sender;
-                allTopic[indexTopic].nb_sub++;
-                kill(msg->sender,SIGHUP);
-            }else{
-                printf("BROKER : Impossible de sub a ce topic, le nombre de sub max est atteint\n");
-                kill(msg->sender,SIGUSR1); // dans le programem sub, il y a une gestion de SIGUSR1
+            if (indexTopic> -1) { // le topic existe
+                if (allTopic[indexTopic].nb_sub+1 < MAX_SUB) {
+                    printf("\t> Ajout du sub\n");
+                    allTopic[indexTopic].sub[allTopic[indexTopic].nb_sub] = msg->sender;
+                    allTopic[indexTopic].nb_sub++;
+                    kill(msg->sender,SIGHUP);
+                }else{
+                    printf("BROKER : Impossible de sub a ce topic, le nombre de sub max est atteint\n");
+                    kill(msg->sender,SIGUSR1);
+                }
+            }else{ // le topic n'existe pas
+                printf("\t> Le Topic n'existe pas, creation\n");
+                if (nbTopicCrees+1 > MAX_NBTOPIC){
+                    printf("BROKER : Impossible de créer un Topic en plus\n");
+                    kill(msg->sender,SIGUSR1);
+                }else{
+                    strcpy(allTopic[nbTopicCrees].topic,msg->topic);
+                    allTopic[nbTopicCrees].sub[allTopic[nbTopicCrees].nb_sub] = msg->sender;
+                    allTopic[nbTopicCrees].nb_sub++;
+                    nbTopicCrees++;
+                    kill(msg->sender,SIGHUP);
+                }
             }
-        }else{ // le topic n'existe pas
-            printf("\t> Le Topic n'existe pas, creation\n");
-            if (nbTopicCrees+1 > MAX_NBTOPIC){
-                printf("BROKER : Impossible de créer un Topic en plus\n");
-                kill(msg->sender,SIGUSR1);
-            }else{
-                strcpy(allTopic[nbTopicCrees].topic,msg->topic);
-                allTopic[nbTopicCrees].sub[allTopic[nbTopicCrees].nb_sub] = msg->sender;
-                allTopic[nbTopicCrees].nb_sub++;
-                nbTopicCrees++;
-                kill(msg->sender,SIGHUP);
+            
+        } else if (msg->action == 1) {
+            // ===== DESINSCRIPTION =====
+            printf("BROKER : Demande de desinscription au topic %s de la part de %d\n", msg->topic, msg->sender);
+            
+            // Recherche le topic
+            indexTopic = -1;
+            for (int i = 0; i < nbTopicCrees; i++) {
+                if (!(strcmp(allTopic[i].topic, msg->topic))) {
+                    indexTopic = i;
+                    break;
+                }
+            }
+            
+            if (indexTopic > -1) {
+                // Chercher le PID dans la liste des subscribers
+                int trouve = 0;
+                for (int j = 0; j < allTopic[indexTopic].nb_sub; j++) {
+                    if (allTopic[indexTopic].sub[j] == msg->sender) {
+                        printf("\t> Retrait du sub PID %d\n", msg->sender);
+                        
+                        // Décaler tous les PIDs suivants d'un cran vers la gauche
+                        for (int k = j; k < allTopic[indexTopic].nb_sub - 1; k++) {
+                            allTopic[indexTopic].sub[k] = allTopic[indexTopic].sub[k + 1];
+                        }
+                        
+                        // Décrémenter le nombre de subscribers
+                        allTopic[indexTopic].nb_sub--;
+                        trouve = 1;
+                        
+                        printf("BROKER : Sub retire du topic %s (reste %d sub)\n", 
+                               msg->topic, allTopic[indexTopic].nb_sub);
+                        break;
+                    }
+                }
+                
+                if (!trouve) {
+                    printf("BROKER : PID %d n'etait pas abonne au topic %s\n", msg->sender, msg->topic);
+                }
+            } else {
+                printf("BROKER : Le topic %s n'existe pas\n", msg->topic);
             }
         }
 
@@ -199,7 +246,7 @@ int main (int argc, char ** argv) {
     // Ce semaphore sert a proteger la SHM utilise pour transferer les messages entre les differents processus
     printf("BROKER :  Creation du semaphore pour la SHM\n");
     semMSG = sem_open("/msg",O_CREAT,0666,0);
-    CHECK(semMSG,"BROKER : Erreur lors de l'ouverture du semaphore\n");
+    if (semMSG == SEM_FAILED) { perror("BROKER : Erreur lors de l'ouverture du semaphore\n"); exit(-1); }
     printf("BROKER : Fin Creation du semaphore\n");
     // ----------------------------------------
 
@@ -215,7 +262,7 @@ int main (int argc, char ** argv) {
     CHECK(shmid,"BROKER : Erreur lors de l'attribution d'id pour la SHM\n");
     printf("\t> Allocation de memoire a la SHM\n");
     shmadd = shmat(shmid,NULL,0);
-    CHECK(shmadd,"BROKER : Erreur lros de l'allocation memoire de la SHM\n");
+    if (shmadd == (void*)-1) { perror("BROKER : Erreur lors de l'allocation memoire de la SHM\n"); exit(-1); }
     printf("BROKER : Fin creation SHM\n");
     // ------------------------------------
 
@@ -231,7 +278,7 @@ int main (int argc, char ** argv) {
     CHECK(shmid_PID,"BROKER : Erreur lors de l'attribution d'id pour la SHM\n");
     printf("\t> Allocation de memoire a la SHM\n");
     shmadd_PID = shmat(shmid_PID,NULL,0);
-    CHECK(shmadd_PID,"BROKER : Erreur lros de l'allocation memoire de la SHM\n");
+    if (shmadd_PID == (void*)-1) { perror("BROKER : Erreur lors de l'allocation memoire de la SHM\n"); exit(-1); }
     printf("\t> Ecriture de mon PID dans la SHM\n");
     *shmadd_PID = getpid(); // ecrire valeur point
     printf("BROKER : Fin creation SHM_PID\n");
@@ -241,6 +288,7 @@ int main (int argc, char ** argv) {
     sem_post(semMSG); // Mise en place d'un jeton dans le semaphore pour rendre la SHM accesible
     printf("BROKER : Configuration Finie - Attente de publication de message\n");
     while (1) { // boucle d'attente de signaux
+        pause();
     }
     // --------------------------
     exit(EXIT_SUCCESS);
