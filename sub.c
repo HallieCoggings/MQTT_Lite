@@ -36,10 +36,11 @@
 //Structure pour contenir un message
 struct Message
 {
-    char topic[MAX_NOMTOPIC]; //topic sur lequel est SUBlié le message
+    char topic[MAX_NOMTOPIC]; //topic sur lequel est publié le message
     char msg[MAX_MSG]; // message
     pid_t sender; // pid de celui qui envoie le message
     pid_t recepter; //pid de celui qui doit recevoir le message
+    int action; //gestion abonnement(0), desinscription(1) et publication(-1) dans un topic
 };
 
 // -----------------------------------
@@ -61,6 +62,9 @@ pid_t broker_pid;
 int isSub = 0; // est-ce que le processus est abonne
 int subFlag = 0; // est-ce que le processus peut s'abonner
 
+// > variable pour sauvegarder le topic
+char topic_save[MAX_NOMTOPIC]; // sauvegarde du topic pour la desinscription
+
 // ---------------------------
 
 // --- DEFINITION SIGHANDLER --- //
@@ -70,6 +74,22 @@ void subHandler (int signb) {
     {
     case SIGINT: // Signal de fin de programme
         printf("\nSUB : Arret du programme\n");
+        
+        if(isSub){
+            printf("SUB : Desinscription du topic %s\n", topic_save);
+
+            sem_wait(semMSG);
+            struct Message *msg = shmadd;
+            strcpy(msg->topic, topic_save);
+            msg->sender = getpid();
+            msg->recepter = broker_pid;
+            msg->action = 1; //desinscription
+            sem_post(semMSG);
+
+            kill(broker_pid, SIGUSR2);
+            sleep(1);
+        }
+        
         // * ----------- Destruction des liens ------------- * //
         printf("SUB : Suppression liens SHM & Semaphore\n");
         shmdt(shmadd);
@@ -89,8 +109,8 @@ void subHandler (int signb) {
         printf("\t> Attente du semaphore\n");
         sem_wait(semMSG);
         printf("\t> Traitement de la reception\n");
-        printf("SUB : Mesage : %s\n", msg->msg);
-        printf("SUB : J'ai fini de traiter la demande");
+        printf("SUB : Message : %s\n", msg->msg);
+        printf("SUB : J'ai fini de traiter la demande\n");
         sem_post(semMSG);
         break;
 
@@ -115,10 +135,10 @@ int main (int argc, char ** argv) {
     mask.sa_handler = subHandler;
     CHECK(sigemptyset(&mask.sa_mask),"SUB : Erreur lors du SIGEMPTY\n");
     CHECK(sigprocmask(SIG_SETMASK,&mask.sa_mask,&old),"SUB : Erreur lors du SIGPROC\n");
-    CHECK(sigaction(SIGUSR1,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
+    CHECK(sigaction(SIGUSR1,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR1\n");
     CHECK(sigaction(SIGUSR2,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGUSR2\n");
     CHECK(sigaction(SIGINT,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT\n");
-    CHECK(sigaction(SIGHUP,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGINT\n");
+    CHECK(sigaction(SIGHUP,&mask,NULL),"SUB : Erreur lors du SIGACTION pour SIGHUP\n");
 
     // ----------------------------------
 
@@ -126,7 +146,7 @@ int main (int argc, char ** argv) {
     // Semphore pour acceder a la SHM des messages
     printf("SUB : Ouverture du semaphore pour la SHM\n");
     semMSG = sem_open("/msg",0);
-    CHECK(semMSG,"SUB : Erreur lors de l'ouverture du sempahore\n");
+    if (semMSG == SEM_FAILED) { perror("SUB : Erreur lors de l'ouverture du semaphore\n"); exit(-1); }
     printf("SUB : Fin Ouverture Semaphore\n");
     // --------------------------------------
 
@@ -141,23 +161,13 @@ int main (int argc, char ** argv) {
     CHECK(shmid,"SUB : Erreur lors de la recuperation d'id pour la SHM\n");
     printf("\t> Obtenir Mem addr de la SHM\n");
     shmadd = shmat(shmid, NULL, 0);
-    CHECK(shmadd,"SUB : Erreur lors de l'obtention de l'addresse Memoire de la SHM\n");
+    if (shmadd == (void*)-1) { perror("SUB : Erreur lors de l'obtention de l'adresse Memoire de la SHM\n"); exit(-1); }
     printf("SUB : Fin acces a la SHM\n");
     // ------------------------
 
     // * ----------- MAIN ------------- *//
 
     // * ------ OBTENIR PID DU BROKER ------ * //
-    /*
-    V1 Obtention du BROKER
-    char buf_tmp[64];
-    printf("SUB : Entrez le PID du broker : "); //recup PID broker pour envoi signaux
-    fgets(buf_tmp,64,stdin);
-    broker_pid = atoi(buf_tmp);
-    //verification de l'existence du broker
-    CHECK(kill(broker_pid, 0), "SUB : Le broker n'existe pas\n"); 
-    printf("SUB : Broker trouve (PID: %d)\n", broker_pid);
-    */
     printf("SUB : Recuperation du PID du Broker\n");
     printf("\t> Generation de la cle pour la SHM_PID\n");
     key_t tok_PID = ftok(TOK_FILE,ID_PROJET+1);
@@ -167,7 +177,7 @@ int main (int argc, char ** argv) {
     CHECK(shmid_PID,"SUB : Erreur lors de la recuperation d'id pour la SHM\n");
     printf("\t> Obtenir Mem Addr de la SHM\n");
     shmadd_PID = shmat(shmid_PID,NULL,0);
-    CHECK(shmadd_PID,"SUB :  Erreur lors de l'obtention de l'addresse Memoire de la SHM\n");
+    if (shmadd_PID == (void*)-1) { perror("SUB : Erreur lors de l'obtention de l'adresse Memoire de la SHM\n"); exit(-1); }
     printf("\t> Sauvegarde du PID\n");
     broker_pid = *shmadd_PID;
     printf("SUB : PID du Broker trouvé (%d)\n",broker_pid);
@@ -191,6 +201,7 @@ int main (int argc, char ** argv) {
             strcpy(msg->topic,topic);
             msg->sender = getpid();
             msg->recepter = broker_pid;
+            msg->action = 0; // abonnement
             sem_post(semMSG);
             kill(broker_pid,SIGUSR2);
             printf("\t> Attente de la confirmation d'abonnement\n");
@@ -200,10 +211,11 @@ int main (int argc, char ** argv) {
 
             if (subFlag == 1) {
                 printf("SUB : Je suis sub à %s\n",topic);
+                strcpy(topic_save, topic); // sauvegarde du topic
                 isSub = 1;
             }
 
-            if (subFlag == 0) {
+            if (subFlag == 2) {
                 printf("SUB : La demande a echoue\n");
             }
         }else{
@@ -218,4 +230,3 @@ int main (int argc, char ** argv) {
 
     // ---------------------------------
 }
-
