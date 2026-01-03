@@ -27,6 +27,7 @@ struct Message
     char msg[MAX_MSG]; // message
     pid_t sender; // pid de celui qui envoie le message
     pid_t recepter; //pid de celui qui doit recevoir le message
+    int action; //gestion abonnement(0), desinscription(1) et publication(-1) dans un topic
 };
 
 // -- DEFINITION VARIABLE GLOBALE ---
@@ -77,15 +78,6 @@ int main (int argc, char ** argv) {
     // -------------------------------------
 
     // * -- RECUPERATION DU PID DU BROKER * ---
-    /*
-    V1 :
-    printf("PUB : Entrez le PID du broker : "); //recup PID broker pour envoi signaux
-    scanf("%d", &broker_pid);
-    //verification de l'existence du broker
-    CHECK(kill(broker_pid, 0), "PUB : Le broker n'existe pas\n"); 
-    printf("PUB : Broker trouve (PID: %d)\n", broker_pid);
-    */
-
     // V2 : utilisation d'une SHM
     printf("PUB : Recuperation du PID du Broker\n");
     printf("\t> Generation de la cle pour la SHM_PID\n");
@@ -96,7 +88,7 @@ int main (int argc, char ** argv) {
     CHECK(shmid_PID,"PUB : Erreur lors de la recuperation d'id pour la SHM\n");
     printf("\t> Obtenir Mem Addr de la SHM\n");
     shmadd_PID = shmat(shmid_PID,NULL,0);
-    CHECK(shmadd_PID,"PUB :  Erreur lors de l'obtention de l'addresse Memoire de la SHM\n");
+    if (shmadd_PID == (void*)-1) { perror("PUB : Erreur lors de l'obtention de l'adresse Memoire de la SHM\n"); exit(-1); }
     printf("\t> Sauvegarde du PID\n");
     broker_pid = *shmadd_PID;
     printf("PUB : PID du Broker trouvé (%d)\n",broker_pid);
@@ -106,7 +98,7 @@ int main (int argc, char ** argv) {
     //ouverture semaphore creee par broker pour proteger acces shm
     printf("PUB : Ouverture du semaphore\n");
     semMSG = sem_open("/msg", 0); // 0=ouverture pas creation
-    CHECK(semMSG, "PUB : Erreur lors de l'ouverture du semaphore\n");
+    if (semMSG == SEM_FAILED) { perror("PUB : Erreur lors de l'ouverture du semaphore\n"); exit(-1); }
     printf("PUB : Fin ouverture du semaphore\n");
     // ----------------------------------------
 
@@ -118,12 +110,12 @@ int main (int argc, char ** argv) {
     CHECK(tok, "PUB : Erreur creation cle pour la SHM\n");
     printf("\t> Recuperation de l'id de la SHM\n");
     //recuperation id shm existante
-    shmid = shmget(tok, sizeof(struct Message), 0666); //on utilise pas 777 ici
+    shmid = shmget(tok, sizeof(struct Message), 0666);
     CHECK(shmid, "PUB : Erreur lors de la recuperation d'id pour la SHM\n");
     //association shm a espace memoire
     printf("\t> Attachement a la SHM\n");
     shmadd = shmat(shmid, NULL, 0);
-    CHECK(shmadd, "PUB : Erreur lors de l'attachement a la SHM\n");
+    if (shmadd == (void*)-1) { perror("PUB : Erreur lors de l'attachement a la SHM\n"); exit(-1); }
     printf("PUB : Fin connexion SHM\n");
     // ------------------------------------
 
@@ -132,11 +124,6 @@ int main (int argc, char ** argv) {
     
     char topic[MAX_NOMTOPIC]; //buffer topic
     char message[MAX_MSG]; //buffer message
-    /*
-    Avec la V1 pour récupérer ID du boker
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF); // vider buffer
-    */
 
     //boucle infinie publication
     while (1) {
@@ -176,7 +163,7 @@ int main (int argc, char ** argv) {
         printf("\t> Attente de la disponibilite du semaphore\n");
         sem_wait(semMSG);
         
-        //ecriture message dans sem
+        //ecriture message dans shm
         printf("\t> Ecriture du message dans la SHM\n");
         struct Message *msg = (struct Message *)shmadd;
         //copie topic sans debordement
@@ -189,6 +176,8 @@ int main (int argc, char ** argv) {
         msg->sender = getpid();
         //recepter = 0 -> pour tous les abonnes
         msg->recepter = 0;
+        //publication = -1 pour l'action
+        msg->action = -1;
         
         printf("\t> Liberation du semaphore\n");
         sem_post(semMSG);
